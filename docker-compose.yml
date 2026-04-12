@@ -1,0 +1,96 @@
+services:
+  users_db:
+    image: postgres:15-alpine
+    container_name: bh_users_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_US_DB}
+      POSTGRES_USER: ${POSTGRES_US_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_US_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--auth-local=scram-sha-256 --auth-host=scram-sha-256"
+    volumes:
+      - postgres_us_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+      - "CMD-SHELL"
+      - "pg_isready -U ${POSTGRES_US_USER} -d ${POSTGRES_US_DB} -h localhost -p 5432"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mus_db:
+    image: postgres:15-alpine
+    container_name: bh_lib_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_MUS_DB}
+      POSTGRES_USER: ${POSTGRES_MUS_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_MUS_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--auth-local=scram-sha-256 --auth-host=scram-sha-256"
+    volumes:
+      - postgres_mus_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+      - "CMD-SHELL"
+      - "pg_isready -U ${POSTGRES_MUS_USER} -d ${POSTGRES_MUS_DB} -h localhost -p 5432"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  
+  tg:
+    build:
+      context: .
+      dockerfile: tg/Dockerfile
+    env_file:
+      - .env
+    container_name: tg
+    restart: on-failure
+    ports:
+      - "${COMUN_PORT}:${COMUN_PORT}"
+    depends_on:
+      users_db:
+        condition: service_healthy
+      mus_db:
+        condition: service_healthy
+    command:
+      - "sh"
+      - "-c"
+      - >
+          until pg_isready -h users_db -p 5432 -U ${POSTGRES_US_USER};
+          do echo waiting for users postgres; sleep 1; done;
+          until pg_isready -h mus_db -p 5432 -U ${POSTGRES_MUS_USER};
+          do echo waiting for mus postgres; sleep 1; done;
+          /tg-client-run/tg-client-bin 
+    healthcheck:
+      test:
+      - "CMD-SHELL"
+      - "curl -f http://localhost:${HEALTH_CHECK_PORT}/health || exit 1"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  parser:
+    build:
+      context: .
+      dockerfile: parser/camoufox_service/Dockerfile
+    container_name: parser
+    restart: on-failure
+    env_file:
+      - .env
+    command:
+      - uvicorn
+      - camoufox_service.main:app
+      - --host
+      - 0.0.0.0
+      - --port 
+      - ${CAMOUFOX_PORT}
+  
+  mini_app:
+    build:
+      context: .
+      dockerfile: UI/Dockerfile
+    container_name: mini_app
+    restart: on-failure
+    env_file:
+      - .env
+    command:
