@@ -11,6 +11,8 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	mux "github.com/gorilla/mux"
+	com "github.com/nk-BH-D/BH_Music/tg/communication"
 	config "github.com/nk-BH-D/BH_Music/tg/internal/config"
 	mus "github.com/nk-BH-D/BH_Music/tg/internal/music_db"
 	us "github.com/nk-BH-D/BH_Music/tg/internal/users_db"
@@ -26,7 +28,7 @@ func main() {
 	// connect to Postgres lib
 	pg_mus_db, err := mus.NewMusPostgres(conf.DB_MUS_URL, conf.POSTGRES_MUS_SMOC, conf.POSTGRES_MUS_SMIC)
 	if err != nil {
-		log.Fatalf("failed to connect postgres_lib_db: %v", err)
+		log.Fatalf("failed to connect postgres_mus_db: %v", err)
 	}
 	defer pg_mus_db.CloseMus()
 
@@ -98,6 +100,34 @@ func main() {
 			} else if update.CallbackQuery != nil {
 				go tg.HandleCallback(bot, update.CallbackQuery)
 			}
+		}
+	}()
+
+	// start and handler com-server
+	rout := mux.NewRouter()
+
+	rout.HandleFunc("/home", func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("Перехвачена паника: %v", r)
+				http.Error(w, "panic", http.StatusInternalServerError)
+				return
+			}
+		}()
+		log.Println("Запрос: /home")
+		com.HandlerHelloParser(w, r)
+		log.Println("Запрос /home обработан")
+	})
+
+	CS := &http.Server{
+		Addr:    fmt.Sprintf(":%s", conf.COMMUN_PORT),
+		Handler: rout,
+	}
+
+	go func() {
+		log.Printf("com-server listening on port %s", CS.Addr)
+		if err := CS.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to serve com-server: %v", err)
 		}
 	}()
 

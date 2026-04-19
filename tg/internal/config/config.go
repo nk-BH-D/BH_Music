@@ -17,6 +17,7 @@ type Config struct {
 	POSTGRES_US_SMOC  int
 	POSTGRES_US_SMIC  int
 	REPO_URL          string
+	TG_CHANNEL_URL    string
 }
 
 func Loader() (*Config, error) {
@@ -83,6 +84,11 @@ func Loader() (*Config, error) {
 		return nil, fmt.Errorf("error whem getting repo url")
 	}
 
+	tg_channel_url := os.Getenv("TG_CHANNEL_URL")
+	if tg_channel_url == "" {
+		return nil, fmt.Errorf("error whem getting tg channel url")
+	}
+
 	return &Config{
 		BOT_TOKEN:         bot_token,
 		COMMUN_PORT:       commun_port,
@@ -94,5 +100,6 @@ func Loader() (*Config, error) {
 		POSTGRES_US_SMOC:  int_db_us_smoc,
 		POSTGRES_US_SMIC:  int_db_us_smic,
 		REPO_URL:          repo_url,
+		TG_CHANNEL_URL:    tg_channel_url,
 	}, nil
 }

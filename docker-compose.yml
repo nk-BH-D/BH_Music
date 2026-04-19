@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_US_PASSWORD}
       POSTGRES_INITDB_ARGS: "--auth-local=scram-sha-256 --auth-host=scram-sha-256"
     volumes:
-      - postgres_us_data:/var/lib/postgresql/data
+      - postgres_us_data:/var/us/postgresql/data
     healthcheck:
       test:
       - "CMD-SHELL"
@@ -20,7 +20,7 @@ services:
 
   mus_db:
     image: postgres:15-alpine
-    container_name: bh_lib_db
+    container_name: bh_mus_db
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_MUS_DB}
@@ -28,7 +28,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_MUS_PASSWORD}
       POSTGRES_INITDB_ARGS: "--auth-local=scram-sha-256 --auth-host=scram-sha-256"
     volumes:
-      - postgres_mus_data:/var/lib/postgresql/data
+      - postgres_mus_data:/var/mus/postgresql/data
     healthcheck:
       test:
       - "CMD-SHELL"
@@ -39,14 +39,16 @@ services:
   
   tg:
     build:
-      context: .
-      dockerfile: tg/Dockerfile
+      context: ./tg
+      dockerfile: Dockerfile
     env_file:
       - .env
     container_name: tg
     restart: on-failure
+
     ports:
-      - "${COMUN_PORT}:${COMUN_PORT}"
+      - "${COMMUN_PORT}:${COMMUN_PORT}"
+
     depends_on:
       users_db:
         condition: service_healthy
@@ -60,7 +62,8 @@ services:
           do echo waiting for users postgres; sleep 1; done;
           until pg_isready -h mus_db -p 5432 -U ${POSTGRES_MUS_USER};
           do echo waiting for mus postgres; sleep 1; done;
-          /tg-client-run/tg-client-bin 
+          /app/bh_mus-bin 
+    
     healthcheck:
       test:
       - "CMD-SHELL"
@@ -69,28 +72,32 @@ services:
       timeout: 5s
       retries: 5
   
-  parser:
-    build:
-      context: .
-      dockerfile: parser/camoufox_service/Dockerfile
-    container_name: parser
-    restart: on-failure
-    env_file:
-      - .env
-    command:
-      - uvicorn
-      - camoufox_service.main:app
-      - --host
-      - 0.0.0.0
-      - --port 
-      - ${CAMOUFOX_PORT}
-  
-  mini_app:
-    build:
-      context: .
-      dockerfile: UI/Dockerfile
-    container_name: mini_app
-    restart: on-failure
-    env_file:
-      - .env
-    command:
+ #parser:
+ #  build:
+ #    context: .
+ #    dockerfile: parser/camoufox_service/Dockerfile
+ #  container_name: parser
+ #  restart: on-failure
+ #  env_file:
+ #    - .env
+ #  command:
+ #    - uvicorn
+ #    - camoufox_service.main:app
+ #    - --host
+ #    - 0.0.0.0
+ #    - --port 
+ #    - ${CAMOUFOX_PORT}
+ #
+ #mini_app:
+ #  build:
+ #    context: .
+ #    dockerfile: UI/Dockerfile
+ #  container_name: mini_app
+ #  restart: on-failure
+ #  env_file:
+ #    - .env
+ #  command:
+
+volumes:
+  postgres_us_data:
+  postgres_mus_data:

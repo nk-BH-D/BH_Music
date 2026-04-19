@@ -45,15 +45,28 @@ func deleteUserState(chatID int64) {
 	delete(userStates, chatID)
 }
 
-func sendErrorMessage(bot *tgbotapi.BotAPI, chatID int64, message string) {
+func sendErrorMessage(bot *tgbotapi.BotAPI, chatID int64, message, buttom string) {
 	msg := tgbotapi.NewMessage(chatID, message)
+	switch buttom {
+	//case "rating":
+	//	msg.ReplyMarkup = createRatingKeeydoard()
+	case "menu":
+		msg.ReplyMarkup = createMenuKeyboard()
+	case "command":
+		msg.ReplyMarkup = createCommandKeyboard()
+	case "":
+		msg.ReplyMarkup = nil
+	default:
+		log.Printf("unknown button type: %s", buttom)
+		sendErrorMessage(bot, chatID, "Internal service error4: повторите попытку позже", "")
+	}
 	_, sendErr := bot.Send(msg)
 	if sendErr != nil {
 		log.Printf("error sending message: %s, %v", message, sendErr)
 		return
 	}
 }
-func sendSuccessMessage(bot *tgbotapi.BotAPI, chatID int64, message string, buttom string) {
+func sendSuccessMessage(bot *tgbotapi.BotAPI, chatID int64, message, buttom string) {
 	message_list := []string{}
 	if len(message) > 4096 {
 		runes := []rune(message)
@@ -76,20 +89,40 @@ func assistedSendSuccessMessage(bot *tgbotapi.BotAPI, chatID int64, message_list
 	for _, message := range message_list {
 		msg := tgbotapi.NewMessage(chatID, message)
 		switch buttom {
-		case "rating":
-			msg.ReplyMarkup = createRatingKeeydoard()
+		//case "rating":
+		//	msg.ReplyMarkup = createRatingKeeydoard()
 		case "menu":
 			msg.ReplyMarkup = createMenuKeyboard()
+		case "command":
+			msg.ReplyMarkup = createCommandKeyboard()
+		case "":
+			msg.ReplyMarkup = nil
+		default:
+			log.Printf("unknown button type: %s", buttom)
+			sendErrorMessage(bot, chatID, "Internal service error3: повторите попытку позже", "")
 		}
 		_, sendErr := bot.Send(msg)
 		if sendErr != nil {
 			log.Printf("error sending message: %s, %v", message, sendErr)
-			sendErrorMessage(bot, chatID, fmt.Sprintf("произошла ошибка при отправке сообщения: %v", sendErr))
+			sendErrorMessage(bot, chatID, fmt.Sprintf("произошла ошибка при отправке сообщения: %v", sendErr), "")
 			log.Printf("ошибка при отправкее сообщения: %v", sendErr)
 			return
 		}
 	}
 
+}
+
+func sendFileAsAudio(bot *tgbotapi.BotAPI, chatID int64, fileID string, title, performer, text string) {
+	audioConfig := tgbotapi.NewAudio(chatID, tgbotapi.FileID(fileID))
+	audioConfig.Title = title
+	audioConfig.Caption = text
+	audioConfig.Performer = performer
+	audioConfig.ReplyMarkup = createMenuKeyboard()
+
+	_, err := bot.Send(audioConfig)
+	if err != nil {
+		log.Printf("Ошибка при отправке файла как музыки: %v", err)
+	}
 }
 
 func HandleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
@@ -101,7 +134,7 @@ func HandleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("Intercepted panic: %v", r)
-			sendErrorMessage(bot, chatID, "Что-то пошло не так, попробуйте снова")
+			sendErrorMessage(bot, chatID, "Что-то пошло не так, попробуйте снова", "")
 			return
 		}
 	}()
@@ -110,6 +143,73 @@ func HandleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 		deleteUserState(chatID)
 		go showMainMenu(bot, chatID, userID, login, full_name)
 		log.Printf("Активныч горутин: %d\n", runtime.NumGoroutine())
+		return
+	}
+
+	if state, ok := getUserState(chatID); ok {
+		for key := range state {
+			switch key {
+			case "search":
+				go handlerSearchMusic(bot, userID, chatID, message)
+				log.Printf("Активныч горутин: %d\n", runtime.NumGoroutine())
+				return
+			case "download_music":
+				go handlerDownloadMusic(bot, userID, chatID, message)
+				log.Printf("Активныч горутин: %d\n", runtime.NumGoroutine())
+				return
+			case "download_playlist":
+				//go
+				//return
+			//case "rating":
+			//	grade := state[key]
+			//go
+			//return
+			default:
+				log.Printf("неизвестная команда: %s", key)
+				sendErrorMessage(bot, chatID, "Неизвестная команда", "menu")
+				return
+			}
+		}
+	}
+}
+
+func HandleCallback(bot *tgbotapi.BotAPI, callbackQuery *tgbotapi.CallbackQuery) {
+	chatID := callbackQuery.Message.Chat.ID
+	data := callbackQuery.Data
+	//userID := callbackQuery.From.ID
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Перехвачена паника: %v", r)
+			sendErrorMessage(bot, chatID, "Что-то пошло не так, попробуйте снова", "menu")
+			return
+		}
+	}()
+
+	switch data {
+	case "show_menu":
+		deleteUserState(chatID)
+		sendSuccessMessage(bot, chatID, "Выберете действие", "command")
+		return
+	//case "good", "bad":
+	//	setUserState(chatID, map[string]string{"rating": data})
+	//	sendSuccessMessage(bot, chatID, "Спасибо за оценку!", "menu")
+	//	return
+	case "search":
+		setUserState(chatID, map[string]string{"search": ""})
+		sendSuccessMessage(bot, chatID, "Введите название песни и исполнителя", "")
+		return
+	case "download_music":
+		setUserState(chatID, map[string]string{"download_music": ""})
+		sendSuccessMessage(bot, chatID, "Отправьте аудио файл", "")
+		return
+	case "download_playlist":
+		setUserState(chatID, map[string]string{"download_playlist": ""})
+		sendSuccessMessage(bot, chatID, "Отправьте файл плейлиста", "")
+		return
+	default:
+		log.Printf("неизвестная команда: %s", data)
+		sendErrorMessage(bot, chatID, "Неизвестная команда", "menu")
 		return
 	}
 }

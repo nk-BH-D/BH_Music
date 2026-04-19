@@ -6,6 +6,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	pq "github.com/lib/pq"
 )
 
 type PostgresUs struct {
@@ -28,7 +29,7 @@ func NewUsPostgres(db_us_url string, smoc, smic int) (*PostgresUs, error) {
 	}
 
 	p := &PostgresUs{DB_us: db}
-	if err := p.ensureSchema(); err != nil {
+	if err := p.ensureUsSchema(); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -38,7 +39,7 @@ func (p *PostgresUs) CloseUs() error {
 	return p.DB_us.Close()
 }
 
-func (p *PostgresUs) ensureSchema() error {
+func (p *PostgresUs) ensureUsSchema() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -49,6 +50,7 @@ func (p *PostgresUs) ensureSchema() error {
 		full_name TEXT NOT NULL,
 		login TEXT UNIQUE,
 		status TEXT NOT NULL,
+		file_id_list TEXT[] NOT NULL DEFAULT'{}', 
 		created_ad TIMESTAMP WITH TIME ZONE DEFAULT now()
 	);`
 	_, err := p.DB_us.ExecContext(ctx, schrema)
@@ -94,4 +96,26 @@ func (p *PostgresUs) UpdateUserData(ctx context.Context, user_id int64, login, n
 		user_id,
 	)
 	return err
+}
+
+func (p *PostgresUs) UpdateFileIDList(ctx context.Context, user_id int64, file_id string) error {
+	_, err := p.DB_us.ExecContext(
+		ctx,
+		"UPDATE users SET file_id_list = array_append(file_id_list, $1) WHERE user_id = $2",
+		file_id, user_id,
+	)
+	return err
+}
+
+func (p *PostgresUs) GetFileIDList(ctx context.Context, user_id int64) ([]int64, error) {
+	var fileIDL []int64
+	row := p.DB_us.QueryRowContext(
+		ctx,
+		"SELECT file_id_list FROM users WHERE user_id = $1",
+		user_id,
+	)
+	if err := row.Scan(pq.Array(&fileIDL)); err != nil {
+		return nil, err
+	}
+	return fileIDL, nil
 }
