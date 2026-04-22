@@ -72,22 +72,29 @@ services:
       timeout: 5s
       retries: 5
   
- #parser:
- #  build:
- #    context: .
- #    dockerfile: parser/camoufox_service/Dockerfile
- #  container_name: parser
- #  restart: on-failure
- #  env_file:
- #    - .env
- #  command:
- #    - uvicorn
- #    - camoufox_service.main:app
- #    - --host
- #    - 0.0.0.0
- #    - --port 
- #    - ${CAMOUFOX_PORT}
- #
+  parser:
+    build:
+      context: ./parser/camoufox_service
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    container_name: parser
+    restart: on-failure
+    
+    ports:
+      - "${CAMOUFOX_PORT}:${CAMOUFOX_PORT}"
+  
+    depends_on:
+      tg:
+        condition: service_healthy
+    command:
+      - uvicorn
+      - camoufox_service.main:app
+      - --host
+      - 0.0.0.0
+      - --port 
+      - ${CAMOUFOX_PORT}
+ 
  #mini_app:
  #  build:
  #    context: .

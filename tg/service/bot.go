@@ -66,6 +66,7 @@ func sendErrorMessage(bot *tgbotapi.BotAPI, chatID int64, message, buttom string
 		return
 	}
 }
+
 func sendSuccessMessage(bot *tgbotapi.BotAPI, chatID int64, message, buttom string) {
 	message_list := []string{}
 	if len(message) > 4096 {
@@ -150,7 +151,7 @@ func HandleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 		for key := range state {
 			switch key {
 			case "search":
-				go handlerSearchMusic(bot, userID, chatID, message)
+				go handlerSearchMusic(bot, userID, chatID, message, "")
 				log.Printf("Активныч горутин: %d\n", runtime.NumGoroutine())
 				return
 			case "download_music":

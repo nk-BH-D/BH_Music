@@ -9,6 +9,7 @@ import (
 type Config struct {
 	BOT_TOKEN         string
 	COMMUN_PORT       string
+	CAMOUFOX_PORT     string
 	HEALTH_CHECK_PORT string
 	DB_MUS_URL        string
 	POSTGRES_MUS_SMOC int
@@ -30,6 +31,11 @@ func Loader() (*Config, error) {
 	commun_port := os.Getenv("COMMUN_PORT")
 	if commun_port == "" {
 		return nil, fmt.Errorf("error whem get commun port")
+	}
+
+	camoufox_port := os.Getenv("CAMOUFOX_PORT")
+	if camoufox_port == "" {
+		return nil, fmt.Errorf("error whem get camoufox port")
 	}
 
 	health_check_port := os.Getenv("HEALTH_CHECK_PORT")
@@ -92,6 +98,7 @@ func Loader() (*Config, error) {
 	return &Config{
 		BOT_TOKEN:         bot_token,
 		COMMUN_PORT:       commun_port,
+		CAMOUFOX_PORT:     camoufox_port,
 		HEALTH_CHECK_PORT: health_check_port,
 		DB_MUS_URL:        db_mus_url,
 		DB_US_URL:         db_us_url,

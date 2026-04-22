@@ -39,7 +39,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID, userID int64, login, name string
 			bot,
 			chatID,
 			fmt.Sprintf(
-				"Привет %s,\nВы можете подписаться на канал автора %s и ознакомиться с кодом и инструкцией тут.\nGitHub: %s\nЧто-бы продолжить нажмите 'Menu'.",
+				"Привет %s,\nВы можете подписаться на канал автора %s и ознакомиться с кодом и инструкцией тут.\nGitHub: %s\nЧто-бы продолжить нажмите 'Меню'.",
 				name,
 				conf.TG_CHANNEL_URL,
 				conf.REPO_URL,

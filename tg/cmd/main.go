@@ -12,7 +12,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	mux "github.com/gorilla/mux"
-	com "github.com/nk-BH-D/BH_Music/tg/communication"
+	//com "github.com/nk-BH-D/BH_Music/tg/communication"
 	config "github.com/nk-BH-D/BH_Music/tg/internal/config"
 	mus "github.com/nk-BH-D/BH_Music/tg/internal/music_db"
 	us "github.com/nk-BH-D/BH_Music/tg/internal/users_db"
@@ -106,18 +106,18 @@ func main() {
 	// start and handler com-server
 	rout := mux.NewRouter()
 
-	rout.HandleFunc("/home", func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("Перехвачена паника: %v", r)
-				http.Error(w, "panic", http.StatusInternalServerError)
-				return
-			}
-		}()
-		log.Println("Запрос: /home")
-		com.HandlerHelloParser(w, r)
-		log.Println("Запрос /home обработан")
-	})
+	//rout.HandleFunc("/home", func(w http.ResponseWriter, r *http.Request) {
+	//	defer func() {
+	//		if r := recover(); r != nil {
+	//			log.Printf("Перехвачена паника: %v", r)
+	//			http.Error(w, "panic", http.StatusInternalServerError)
+	//			return
+	//		}
+	//	}()
+	//	log.Println("Запрос: /home")
+	//	com.HandlerHelloParser(w, r)
+	//	log.Println("Запрос /home обработан")
+	//})
 
 	CS := &http.Server{
 		Addr:    fmt.Sprintf(":%s", conf.COMMUN_PORT),
