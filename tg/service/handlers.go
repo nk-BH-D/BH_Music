@@ -133,7 +133,9 @@ func sendDataToServer(bot *tgbotapi.BotAPI, url string, data *DataForParser) (st
 			return "", "", fmt.Errorf("error decoding response: %w", err)
 		}
 		log.Printf("Received from parser: %+v", respData)
-		respData.URL = "https://ru-d3.drivemusic.me/dl/lOg3JY8ZCnK7oSnFCYLG0Q/1776925461/download_music/2024/11/arija-bespechnyjj-angel.mp3"
+		//respData.URL = "https://ru-d3.drivemusic.me/dl/lOg3JY8ZCnK7oSnFCYLG0Q/1776925461/download_music/2024/11/arija-bespechnyjj-angel.mp3"
+		//respData.URL = "https://sbornik.cc/chart/Madk1D,%20VILLIAN%20-%208%20Milia%20(Sbornik.cc).mp3"
+		respData.URL = "https://sbornik.cc/chart/Madk1D,%20Greyrock,%20Tewiq%20-%20MARTINE%20ROSE%20(Sbornik.cc).mp3"
 		file_un_id, fileID, err := downloadAndSendAudio(bot, respData.ChatID, respData.URL, respData.Title, respData.Performer)
 		if err != nil {
 			return "", "", fmt.Errorf("error downloading or sending audio: %w", err)
@@ -155,33 +157,45 @@ func downloadAndSendAudio(bot *tgbotapi.BotAPI, chatID int64, fileURL, title, pe
 		return "", "", fmt.Errorf("bad status when downloading: %d", resp.StatusCode)
 	}
 
-	//cоздать временный файл
-	tmpFile, err := os.CreateTemp("", "*.mp3")
-	if err != nil {
-		return "", "", fmt.Errorf("temp file error: %w", err)
-	}
-	defer os.Remove(tmpFile.Name()) // удалить после
-	defer tmpFile.Close()
-	log.Printf("создали")
+	var audio tgbotapi.AudioConfig
+	const maxFileSize = 50 * 1024 * 1024 // 50 МБ
+	if resp.ContentLength > 0 {
+		log.Printf("Content-Length: %d bytes", resp.ContentLength)
+		if resp.ContentLength > maxFileSize {
+			return "", "", fmt.Errorf("file too large: %d bytes", resp.ContentLength)
+		}
+		audio = tgbotapi.NewAudio(chatID, tgbotapi.FileReader{
+			Name:   title,
+			Reader: resp.Body,
+		})
+	} else {
+		//cоздать временный файл
+		tmpFile, err := os.CreateTemp("", "*.mp3")
+		if err != nil {
+			return "", "", fmt.Errorf("temp file error: %w", err)
+		}
+		defer os.Remove(tmpFile.Name()) // удалить после
+		defer tmpFile.Close()
+		log.Printf("создали")
 
-	const maxFileSize = 10 * 1024 * 1024 // 10 МБ
-	limitedReader := io.LimitReader(resp.Body, maxFileSize+1)
-	// cкопировать данные в файл
-	writer, err := io.Copy(tmpFile, limitedReader) // ограничение 10 МБ
-	if err != nil {
-		return "", "", fmt.Errorf("write file error: %w", err)
+		limitedReader := io.LimitReader(resp.Body, maxFileSize+1)
+		// cкопировать данные в файл
+		writer, err := io.Copy(tmpFile, limitedReader)
+		if err != nil {
+			return "", "", fmt.Errorf("write file error: %w", err)
+		}
+		log.Println("скопировали")
+		if writer > maxFileSize {
+			return "", "", fmt.Errorf("file too large: %d bytes", writer)
+		}
+		// отправить в Telegram
+		audio = tgbotapi.NewAudio(chatID, tgbotapi.FilePath(tmpFile.Name()))
 	}
-	log.Println("скопировали")
-	if writer > maxFileSize {
-		return "", "", fmt.Errorf("file too large: %d bytes", writer)
-	}
-
-	// отправить в Telegram
-	audio := tgbotapi.NewAudio(chatID, tgbotapi.FilePath(tmpFile.Name()))
 	audio.Caption = "Вот ваш трек!"
 	audio.ReplyMarkup = createMenuKeyboard()
 	audio.Title = title
 	audio.Performer = performer
+
 	msg, err := bot.Send(audio)
 	if err != nil {
 		return "", "", fmt.Errorf("telegram send error: %w", err)
