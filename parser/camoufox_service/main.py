@@ -132,15 +132,14 @@ async def shutdown_event():
         if not browser_pool:
             return
 
-        # Создаем список задач на закрытие
+        # список задач на закрытие
         tasks = []
         for i, bro in browser_pool.items():
             tasks.append(bro["browser"].__aexit__(None, None, None))
         
         logger.info(f"Closing {len(tasks)} browsers concurrently...")
         
-        # Запускаем всё сразу и ждем завершения всех задач
-        # return_exceptions=True гарантирует, что если один упадет, остальные продолжат закрываться
+        # запускаем всё сразу и ждем завершения всех задач
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         for i, res in enumerate(results):
