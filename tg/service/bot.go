@@ -1,28 +1,30 @@
 package bot
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"runtime"
-	"strings"
 	"sync"
+	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	tgbotapi "github.com/kirugan/telegram-bot-api/v5"
 	config "github.com/nk-BH-D/BH_Music/tg/internal/config"
-	mus "github.com/nk-BH-D/BH_Music/tg/internal/music_db"
-	us "github.com/nk-BH-D/BH_Music/tg/internal/users_db"
+	db "github.com/nk-BH-D/BH_Music/tg/internal/music_users_db"
 )
 
 var (
 	userStates = make(map[int64]map[string]string)
+	broSlot    chan struct{}
 	uSM        sync.RWMutex
 	conf       *config.Config
-	us_db      *us.PostgresUs
-	mus_db     *mus.PostgresMus
+	us_db      *db.PostgresUs
+	mus_db     *db.PostgresMus
 )
 
-func Init(cfg *config.Config, pg_mus *mus.PostgresMus, pg_us *us.PostgresUs) {
+func Init(cfg *config.Config, pg_mus *db.PostgresMus, pg_us *db.PostgresUs) {
 	conf = cfg
+	broSlot = make(chan struct{}, cfg.MAX_BRO)
 	us_db = pg_us
 	mus_db = pg_mus
 }
@@ -59,6 +61,7 @@ func sendErrorMessage(bot *tgbotapi.BotAPI, chatID int64, message, buttom string
 	default:
 		log.Printf("unknown button type: %s", buttom)
 		sendErrorMessage(bot, chatID, "Internal service error4: повторите попытку позже", "")
+		return
 	}
 	_, sendErr := bot.Send(msg)
 	if sendErr != nil {
@@ -67,7 +70,7 @@ func sendErrorMessage(bot *tgbotapi.BotAPI, chatID int64, message, buttom string
 	}
 }
 
-func sendSuccessMessage(bot *tgbotapi.BotAPI, chatID int64, message, buttom string) {
+func sendSuccessMessage(bot *tgbotapi.BotAPI, chatID int64, message, buttom string, msgID int) {
 	message_list := []string{}
 	if len(message) > 4096 {
 		runes := []rune(message)
@@ -80,15 +83,18 @@ func sendSuccessMessage(bot *tgbotapi.BotAPI, chatID int64, message, buttom stri
 
 			message_list = append(message_list, string(runes[i:end]))
 		}
-		assistedSendSuccessMessage(bot, chatID, message_list, buttom)
+		assistedSendSuccessMessage(bot, chatID, message_list, buttom, msgID)
 	} else {
 		message_list = append(message_list, message)
-		assistedSendSuccessMessage(bot, chatID, message_list, buttom)
+		assistedSendSuccessMessage(bot, chatID, message_list, buttom, msgID)
 	}
 }
-func assistedSendSuccessMessage(bot *tgbotapi.BotAPI, chatID int64, message_list []string, buttom string) {
+func assistedSendSuccessMessage(bot *tgbotapi.BotAPI, chatID int64, message_list []string, buttom string, msgID int) {
 	for _, message := range message_list {
 		msg := tgbotapi.NewMessage(chatID, message)
+		if msgID != 0 {
+			msg.ReplyParameters = &tgbotapi.ReplyParameters{MessageID: msgID}
+		}
 		switch buttom {
 		//case "rating":
 		//	msg.ReplyMarkup = createRatingKeeydoard()
@@ -96,11 +102,14 @@ func assistedSendSuccessMessage(bot *tgbotapi.BotAPI, chatID int64, message_list
 			msg.ReplyMarkup = createMenuKeyboard()
 		case "command":
 			msg.ReplyMarkup = createCommandKeyboard()
+		case "reg":
+			msg.ReplyMarkup = createRegistrKeybord()
 		case "":
 			msg.ReplyMarkup = nil
 		default:
 			log.Printf("unknown button type: %s", buttom)
 			sendErrorMessage(bot, chatID, "Internal service error3: повторите попытку позже", "")
+			return
 		}
 		_, sendErr := bot.Send(msg)
 		if sendErr != nil {
@@ -126,11 +135,131 @@ func sendFileAsAudio(bot *tgbotapi.BotAPI, chatID int64, fileID string, title, p
 	}
 }
 
+// функция валидации пользователлей
+func userValid(bot *tgbotapi.BotAPI, userID, chatID int64) bool {
+	ctx, cancle := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancle()
+	accept, _, err := us_db.GetUserStatus(ctx, userID)
+	if err != nil {
+		log.Printf("error when valid user: %v", err)
+		sendErrorMessage(bot, chatID, "Произошла ошибка при проверке прав доступа, повторите попытку позже", "menu")
+		return false
+	}
+	if !accept {
+		sendErrorMessage(bot, chatID, "Вам отказано в доступе.\nВозможно вы не подписаны на канал проекта или не приняли соглашение", "")
+		return false
+	}
+
+	var (
+		fl bool = false
+	)
+
+	member, err := bot.GetChatMember(
+		tgbotapi.GetChatMemberConfig{
+			ChatID: conf.TG_CHANNEL_ID,
+			UserID: userID,
+		},
+	)
+	if err != nil {
+		log.Printf("error when chek sub: %v", err)
+		sendErrorMessage(bot, chatID, "Internal service error14: повторите попытку позже", "")
+		return false
+	} else {
+		switch member.Status {
+		case "creator", "administrator", "member":
+			fl = true
+		case "restricted":
+			if member.IsMember {
+				fl = true
+			} else {
+				sendErrorMessage(bot, chatID, "Вам отказано в доступе.\nВозможно вы не подписаны на канал проекта или не приняли соглашение", "")
+				fl = false
+			}
+		default:
+			sendErrorMessage(bot, chatID, "Вам отказано в доступе.\nВозможно вы не подписаны на канал проекта или не приняли соглашение", "")
+			fl = false
+		}
+	}
+	return fl
+}
+
+// спасатель
+func runSafely(bot *tgbotapi.BotAPI, chatID int64, name string, fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("panic in %s: %v", name, r)
+			sendErrorMessage(bot, chatID, "Что-то пошло не так, попробуйте снова", "")
+		}
+	}()
+
+	log.Printf("%s started now", name)
+	fn()
+}
+
+// спасатель с лимитом единомоментно выполняющихся
+func runSafelyLimited(
+	bot *tgbotapi.BotAPI,
+	chatID int64,
+	name string,
+	slots chan struct{},
+	msgID int,
+	fn func(),
+) {
+	waiting := false
+	var globalMsgID int
+
+	select {
+	case slots <- struct{}{}:
+		log.Printf(
+			"%s started immediately; active=%d/%d; free=%d",
+			name, len(slots), cap(slots), cap(slots)-len(slots),
+		)
+	default:
+		waiting = true
+		log.Printf("%s queued", name)
+		msg := tgbotapi.NewMessage(chatID, "Данные приняты в очередь. Обработка начнётся, когда освободится место.")
+		msg.ReplyParameters = &tgbotapi.ReplyParameters{MessageID: msgID}
+		msgID, err := bot.Send(msg)
+		if err != nil {
+			log.Printf("error when send message: %v", err)
+		}
+		globalMsgID = msgID.MessageID
+	}
+
+	go func() {
+		if waiting {
+			slots <- struct{}{}
+			delBot := tgbotapi.NewDeleteMessage(chatID, globalMsgID)
+			_, err := bot.Request(delBot)
+			if err != nil {
+				log.Printf("error when del message: %v", err)
+			}
+			log.Printf(
+				"%s started immediately; active=%d/%d; free=%d",
+				name, len(slots), cap(slots), cap(slots)-len(slots),
+			)
+		}
+
+		defer func() {
+			<-slots
+			log.Printf("%s reade: active=%d/%d; free=%d",
+				name, len(slots), cap(slots), cap(slots)-len(slots),
+			)
+		}()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("panic in %s: %v", name, r)
+				sendErrorMessage(bot, chatID, "Что-то пошло не так, попробуйте снова", "")
+			}
+		}()
+
+		fn()
+	}()
+}
+
 func HandleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	chatID := message.Chat.ID
 	userID := message.From.ID
-	login := message.From.UserName
-	full_name := strings.TrimSpace(fmt.Sprintf("%s %s", message.From.FirstName, message.From.LastName))
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -142,7 +271,7 @@ func HandleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 
 	if message.Text != "" && message.Text == "/start" {
 		deleteUserState(chatID)
-		go showMainMenu(bot, chatID, userID, login, full_name)
+		go showMainMenu(bot, chatID, userID)
 		log.Printf("Активныч горутин: %d\n", runtime.NumGoroutine())
 		return
 	}
@@ -151,20 +280,26 @@ func HandleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 		for key := range state {
 			switch key {
 			case "search":
-				go handlerSearchMusic(bot, userID, chatID, message, "")
-				log.Printf("Активныч горутин: %d\n", runtime.NumGoroutine())
+				if !userValid(bot, userID, chatID) {
+					return
+				}
+				runSafelyLimited(bot, chatID, key, broSlot, message.MessageID, func() {
+					handlerSearchMusic(bot, userID, chatID, message, "")
+				})
 				return
 			case "download_music":
-				go handlerDownloadMusic(bot, userID, chatID, message)
-				log.Printf("Активныч горутин: %d\n", runtime.NumGoroutine())
+				if !userValid(bot, userID, chatID) {
+					return
+				}
+				runSafely(bot, chatID, key, func() {
+					handlerDownloadMusic(bot, userID, chatID, message)
+				})
 				return
 			case "download_playlist":
-				//go
-				//return
-			//case "rating":
-			//	grade := state[key]
-			//go
-			//return
+				if !userValid(bot, userID, chatID) {
+					return
+				}
+				// тут будет вызов обработчика
 			default:
 				log.Printf("неизвестная команда: %s", key)
 				sendErrorMessage(bot, chatID, "Неизвестная команда", "menu")
@@ -177,7 +312,7 @@ func HandleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 func HandleCallback(bot *tgbotapi.BotAPI, callbackQuery *tgbotapi.CallbackQuery) {
 	chatID := callbackQuery.Message.Chat.ID
 	data := callbackQuery.Data
-	//userID := callbackQuery.From.ID
+	userID := callbackQuery.From.ID
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -190,24 +325,29 @@ func HandleCallback(bot *tgbotapi.BotAPI, callbackQuery *tgbotapi.CallbackQuery)
 	switch data {
 	case "show_menu":
 		deleteUserState(chatID)
-		sendSuccessMessage(bot, chatID, "Выберете действие", "command")
+		sendSuccessMessage(bot, chatID, "Выберете действие", "command", 0)
 		return
-	//case "good", "bad":
-	//	setUserState(chatID, map[string]string{"rating": data})
-	//	sendSuccessMessage(bot, chatID, "Спасибо за оценку!", "menu")
-	//	return
 	case "search":
 		setUserState(chatID, map[string]string{"search": ""})
-		sendSuccessMessage(bot, chatID, "Введите название песни и исполнителя", "")
+		sendSuccessMessage(bot, chatID, "Введите название песни и исполнителя", "", 0)
 		return
 	case "download_music":
 		setUserState(chatID, map[string]string{"download_music": ""})
-		sendSuccessMessage(bot, chatID, "Отправьте аудио файл", "")
+		sendSuccessMessage(bot, chatID, "Отправьте аудио файл", "", 0)
 		return
 	case "download_playlist":
 		setUserState(chatID, map[string]string{"download_playlist": ""})
-		sendSuccessMessage(bot, chatID, "Отправьте файл плейлиста", "")
+		sendSuccessMessage(bot, chatID, "Отправьте файл плейлиста", "", 0)
 		return
+	case "accept":
+		runSafely(bot, chatID, data, func() {
+			AcceptHandler(bot, userID, chatID)
+		})
+		return
+	case "check subscription":
+		runSafely(bot, chatID, data, func() {
+			ChekSub(bot, userID, chatID)
+		})
 	default:
 		log.Printf("неизвестная команда: %s", data)
 		sendErrorMessage(bot, chatID, "Неизвестная команда", "menu")

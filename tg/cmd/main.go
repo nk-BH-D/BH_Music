@@ -10,12 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	mux "github.com/gorilla/mux"
+	tgbotapi "github.com/kirugan/telegram-bot-api/v5"
 	//com "github.com/nk-BH-D/BH_Music/tg/communication"
 	config "github.com/nk-BH-D/BH_Music/tg/internal/config"
-	mus "github.com/nk-BH-D/BH_Music/tg/internal/music_db"
-	us "github.com/nk-BH-D/BH_Music/tg/internal/users_db"
+	db "github.com/nk-BH-D/BH_Music/tg/internal/music_users_db"
 	tg "github.com/nk-BH-D/BH_Music/tg/service"
 )
 
@@ -26,14 +25,14 @@ func main() {
 	}
 
 	// connect to Postgres lib
-	pg_mus_db, err := mus.NewMusPostgres(conf.DB_MUS_URL, conf.POSTGRES_MUS_SMOC, conf.POSTGRES_MUS_SMIC)
+	pg_mus_db, err := db.NewMusPostgres(conf.DB_URL, conf.POSTGRES_SMOC, conf.POSTGRES_SMIC)
 	if err != nil {
 		log.Fatalf("failed to connect postgres_mus_db: %v", err)
 	}
 	defer pg_mus_db.CloseMus()
 
 	// connect to Postgres users
-	pg_us_db, err := us.NewUsPostgres(conf.DB_US_URL, conf.POSTGRES_US_SMOC, conf.POSTGRES_US_SMIC)
+	pg_us_db, err := db.NewUsPostgres(conf.DB_URL, conf.POSTGRES_SMOC, conf.POSTGRES_SMIC)
 	if err != nil {
 		log.Fatalf("failed to connect postgres_us_db: %v", err)
 	}

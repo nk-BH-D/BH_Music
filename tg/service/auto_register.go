@@ -7,21 +7,20 @@ import (
 	"log"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	tgbotapi "github.com/kirugan/telegram-bot-api/v5"
 )
 
-func showMainMenu(bot *tgbotapi.BotAPI, chatID, userID int64, login, name string) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("sMM: intercepted panic: %v", r)
-			sendErrorMessage(bot, chatID, "Что-то пошло не так, попробуйте снова", "menu")
-			return
-		}
-	}()
+func showMainMenu(bot *tgbotapi.BotAPI, chatID, userID int64) {
+	// текст приветрвенного сообщения
+	result := fmt.Sprintf(
+		"Добро пожаловать в BH_Music!\n\n" +
+			"Вы можете ознакомьтесь с документацией и пользовательским соглашением в README" +
+			"Чтобы продолжить, примите соглашение и подпишитесь на канал проекта.",
+	)
 
 	ctxGUS, cancleGUS := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancleGUS()
-	_, _, _, err := us_db.GetUserStatus(ctxGUS, userID)
+	_, _, err := us_db.GetUserStatus(ctxGUS, userID)
 	if err != nil && err != sql.ErrNoRows {
 		log.Printf("error whem getting user status: %v", err)
 		sendErrorMessage(bot, chatID, "Internal service error_1: повторите попытку позже", "")
@@ -29,7 +28,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID, userID int64, login, name string
 	} else if err == sql.ErrNoRows {
 		ctxIU, cancleIU := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancleIU()
-		err := us_db.InsertUser(ctxIU, userID, chatID, "nuser", login, name)
+		err := us_db.InsertUser(ctxIU, userID, chatID, "nuser")
 		if err != nil {
 			log.Printf("error when insert user: %v", err)
 			sendErrorMessage(bot, chatID, "Internal service error_2: повторите попытку позже", "")
@@ -38,25 +37,17 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID, userID int64, login, name string
 		sendSuccessMessage(
 			bot,
 			chatID,
-			fmt.Sprintf(
-				"Привет %s,\nВы можете подписаться на канал автора %s и ознакомиться с кодом и инструкцией тут.\nGitHub: %s\nЧто-бы продолжить нажмите 'Меню'.",
-				name,
-				conf.TG_CHANNEL_URL,
-				conf.REPO_URL,
-			),
-			"menu",
+			result,
+			"reg",
+			0,
 		)
 	} else {
 		sendSuccessMessage(
 			bot,
 			chatID,
-			fmt.Sprintf(
-				"Привет %s,\nВы можете подписаться на канал автора %s и ознакомиться с кодом и инструкцией тут. %s",
-				name,
-				conf.TG_CHANNEL_URL,
-				conf.REPO_URL,
-			),
-			"menu",
+			result,
+			"reg",
+			0,
 		)
 	}
 }

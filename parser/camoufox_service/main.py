@@ -28,12 +28,6 @@ class Data(BaseModel):
 
 
 def config_loder():
-    #port = os.getenv("CAMOUFOX_PORT")
-    #if port is None:
-    #    raise ValueError("CAMOUFOX_PORT environment variable is not set")
-    #host = os.getenv("CAMOUFOX_HOST")
-    #if host is None:
-    #    raise ValueError("CAMOUFOX_HOST environment variable is not set")
     max_bro = os.getenv("MAX_BRO")
     if max_bro is None:
         raise ValueError("MAX_BRO environment variable is not set")
@@ -42,8 +36,6 @@ def config_loder():
         raise ValueError("CAMOUFOX_TIMEOUT environment variable is not set")
     CONFIG["camoufox"]["timeout"] = int(timeout)
     CONFIG["camoufox"]["max_bro"] = int(max_bro)
-    #CONFIG["config"]["port"] = int(port)
-    #CONFIG["config"]["host"] = host
     logger.info(f"Configuration loaded: {CONFIG}")
 
 
@@ -86,37 +78,110 @@ async def release_browser(index: int):
 
 @app.post("/parse")
 async def parse_music(data: Data):
-    # 1. сформировать запрос
-    query = f"{data.title} {data.performer} скачать"
-
-    # 2. найти ссылку (заглушка)
-    music_url = find_url_by_camoufox(query)
+    # найти ссылку 
+    music_url = find_url_by_camoufox(data.title, data.performer)
 
     if music_url == "":
         raise HTTPException(status_code=404, detail="Music not found")
 
-    # 3. отправить обратно в Go
+    # отправить обратно в Go
     return {
         "title": data.title,
         "performer": data.performer,
         "url": music_url,
         "chat_id": data.chat_id,
     }      
-    
 
-async def find_url_by_camoufox(query: str) -> str:
+# ----------------!!!--------------------   
+# надо сделать защиту от редиректа
+# надо сделать функцию которая проверяет ссылки на мусор
+# надо сделать поведение парсера болие универсальным
+# ----------------!!!--------------------
+
+async def find_url_by_camoufox(title, performer: str) -> str:
     i = None
+    file_url = ""
     try:
         i, bro = await get_free_browser()
-        await bro.goto("https://www.google.com/search?q=" + query)
-        # открыть страницу camoufox
+        page = await bro.new_page()
+        query = f"{title} {performer} скачать"
+        await page.goto(f"https://www.google.com/search?q={query}" , wait_until="networkidle")
+        # берём все выданные поиском ссылки
+        links = await page.query_selector_all('a:has(h3)')
+        search_results = []
+        for link in links:
+            href = await link.get_attribute('href')
+            if href and href.startswith('http'):
+                search_results.append(href)
+        logger.info(f"Search results for query '{query}': {search_results}")
+        # открываем каждую ссылку и ищем музыку
+        for url in search_results:
+            await page.goto(url, wait_until="networkidle")
+            # закрываем все всплывающие окна
+            page.on("popup", lambda p: p.close())
+
+            # пытаемся сразу найти ссылку на музыку
+            file_url = await dounload_btn(page, url)
+            if file_url and file_url.startswith("http"):
+                logger.info(f"Found music URL: {file_url} on page {url}")
+                break
+
+            # если не нашли, то ищем поле поиска на сайте
+            search_field = await page.query_selector(
+                'input[name="q"], input[name="search"], input[type="search"], input[placeholder*="поиск" i], input[placeholder*="search" i]'
+            )
+            if search_field:
+                # печатаем название песни
+                await search_field.fill(f"{title} {performer}")
+                await search_field.press("Enter")
+
+                # ждем загрузки результатов уже на самом сайте
+                await page.wait_for_load_state("networkidle")
+
+                # ищем ссылки на музыку
+                file_url = await dounload_btn(page, url)
+                if file_url != "":
+                    logger.info(f"Found music URL: {file_url} on page {url}")
+                    break
+                else:
+                    logger.info(f"No music URL found on page {url}")
+                    continue
+
+            else:
+                logger.info(f"No search field found on page {url}")
+                continue      
     except Exception as e:
         logger.error(f"error in find_url_by_camoufox: {e}")
         raise HTTPException(status_code=500, detail=f"error in find_url_by_camoufox: {e}")
     finally:
+        if page:
+            await page.close()
         if i is not None:
             await release_browser(i)
-    return "хуй" #тест
+    return file_url
+
+
+async def dounload_btn(page, url) -> str:
+    file_url = ""
+    download_btn  = await page.query_selector('a[href*=".mp3"]')
+    if download_btn:
+        file_url = await download_btn.get_attribute("href")
+    else:
+        selectors = [
+            "a.download", 
+            "a.btn-download", 
+            "button.download", 
+            "[title*='Скачать']", 
+            ".download-link"
+        ]
+        for selector in selectors:
+            btn = await page.query_selector(selector)
+            if btn:
+                file_url = await btn.get_attribute("href")
+
+    if file_url and file_url.startswith("http"):
+        logger.info(f"Found music URL: {file_url} on page {url}")
+        return file_url
 
 
 @app.on_event("startup")
@@ -131,7 +196,7 @@ async def shutdown_event():
     async with pool_lock:
         if not browser_pool:
             return
-
+        
         # список задач на закрытие
         tasks = []
         for i, bro in browser_pool.items():
@@ -149,14 +214,3 @@ async def shutdown_event():
                 logger.info(f"Browser {i} closed successfully")
 
     browser_pool.clear()
-
-
-#if __name__ == "__main__":
-#    import uvicorn
-#    uvicorn.run(
-#        app,
-#        host=CONFIG["config"]["host"],
-#        port=CONFIG["config"]["port"],
-#        log_level="info"
-#    )
-    

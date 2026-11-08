@@ -1,15 +1,15 @@
 module github.com/nk-BH-D/BH_Music/tg
 
-go 1.26.2
+go 1.27.3
 
 require (
-	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
+	github.com/gorilla/mux v1.8.1
 	github.com/jackc/pgx/v5 v5.9.2
+	github.com/kirugan/telegram-bot-api/v5 v5.9.0
 	github.com/lib/pq v1.12.3
 )
 
 require (
-	github.com/gorilla/mux v1.8.1 
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect

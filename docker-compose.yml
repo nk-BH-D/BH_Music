@@ -1,38 +1,20 @@
 services:
-  users_db:
+
+  mus_us_db:
     image: postgres:15-alpine
     container_name: music_users_db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_US_DB}
-      POSTGRES_USER: ${POSTGRES_US_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_US_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_INITDB_ARGS: "--auth-local=scram-sha-256 --auth-host=scram-sha-256"
     volumes:
-      - postgres_us_data:/var/us/postgresql/data
+      - postgres_mus_us_data:/var/lib/postgresql/data
     healthcheck:
       test:
       - "CMD-SHELL"
-      - "pg_isready -U ${POSTGRES_US_USER} -d ${POSTGRES_US_DB} -h localhost -p 5432"
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  mus_db:
-    image: postgres:15-alpine
-    container_name: bh_mus_db
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_MUS_DB}
-      POSTGRES_USER: ${POSTGRES_MUS_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_MUS_PASSWORD}
-      POSTGRES_INITDB_ARGS: "--auth-local=scram-sha-256 --auth-host=scram-sha-256"
-    volumes:
-      - postgres_mus_data:/var/mus/postgresql/data
-    healthcheck:
-      test:
-      - "CMD-SHELL"
-      - "pg_isready -U ${POSTGRES_MUS_USER} -d ${POSTGRES_MUS_DB} -h localhost -p 5432"
+      - "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h localhost -p 5432"
       interval: 5s
       timeout: 5s
       retries: 10
@@ -46,21 +28,14 @@ services:
     container_name: tg
     restart: on-failure
 
-    ports:
-      - "${COMMUN_PORT}:${COMMUN_PORT}"
-
     depends_on:
-      users_db:
-        condition: service_healthy
-      mus_db:
+      mus_us_db:
         condition: service_healthy
     command:
       - "sh"
       - "-c"
       - >
-          until pg_isready -h users_db -p 5432 -U ${POSTGRES_US_USER};
-          do echo waiting for users postgres; sleep 1; done;
-          until pg_isready -h mus_db -p 5432 -U ${POSTGRES_MUS_USER};
+          until pg_isready -h mus_us_db -p 5432 -U ${POSTGRES_USER};
           do echo waiting for mus postgres; sleep 1; done;
           /app/bh_mus-bin 
     
@@ -80,13 +55,10 @@ services:
       - .env
     environment:
       - UVICORN_HOST=${CAMOUFOX_HOST}
-      - UVICORN_PORT=${CAMOUFOX_PORT}
+      - UVICORN_PORT=${CAMOUFOX_PORT_FOR_DOCKER}
     container_name: parser
     restart: on-failure
     stop_grace_period: 30s
-    
-    ports:
-      - "${CAMOUFOX_PORT}:${CAMOUFOX_PORT}"
   
     depends_on:
       tg:
@@ -106,5 +78,4 @@ services:
  #  command:
 
 volumes:
-  postgres_us_data:
-  postgres_mus_data:
+  postgres_mus_us_data:

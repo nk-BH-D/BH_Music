@@ -14,9 +14,84 @@ import (
 	"strings"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	tgbotapi "github.com/kirugan/telegram-bot-api/v5"
 )
+
+func AcceptHandler(bot *tgbotapi.BotAPI, userID, chatID int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	accept, _, err := us_db.GetUserStatus(ctx, userID)
+	if err != nil {
+		log.Printf("error when get users data: %v", err)
+		sendErrorMessage(bot, chatID, "Internal service error3: повторите попытку позже", "")
+		return
+	}
+
+	if !accept {
+		ctxChange, cancelC := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelC()
+
+		err := us_db.UpUserAccept(ctxChange, userID, true)
+		if err != nil {
+			log.Printf("error when up user accept: %v", err)
+			sendErrorMessage(bot, chatID, "Internal service error4: повторите попытку позже", "")
+			return
+		}
+		sendSuccessMessage(bot, chatID, "Соглашение принято", "", 0)
+		return
+	} else {
+		sendSuccessMessage(bot, chatID, "Вы уже приняли пользовательское соглашение", "menu", 0)
+		return
+	}
+}
+
+func ChekSub(bot *tgbotapi.BotAPI, userID, chatID int64) {
+	var (
+		text string
+		fl   bool
+	)
+
+	member, err := bot.GetChatMember(
+		tgbotapi.GetChatMemberConfig{
+			ChatID: conf.TG_CHANNEL_ID,
+			UserID: userID,
+		},
+	)
+	if err != nil {
+		log.Printf("error when chek sub: %v", err)
+		sendErrorMessage(bot, chatID, "Internal service error5: повторите попытку позже", "")
+		return
+	} else {
+		switch member.Status {
+		case "creator", "administrator", "member":
+			text = "✅ Ты подписан на канал!"
+			fl = true
+		case "restricted":
+			if member.IsMember {
+				text = "✅ Ты состоишь в канале."
+				fl = true
+			} else {
+				text = "❌ Сначала подпишись на канал, потом проверь подписку."
+				fl = false
+			}
+		default:
+			text = "❌ Сначала подпишись на канал потом проверь подписку."
+			fl = false
+		}
+
+		if fl {
+			sendSuccessMessage(bot, chatID, text, "menu", 0)
+			return
+		}
+
+		if !fl {
+			sendErrorMessage(bot, chatID, text, "")
+			return
+		}
+	}
+}
 
 type DataForParser struct {
 	Title     string `json:"title"`
@@ -68,7 +143,7 @@ func handlerSearchMusic(bot *tgbotapi.BotAPI, userID, chatID int64, message *tgb
 			Performer: performer,
 			ChatID:    chatID,
 		}
-		file_un_id, fileID, err := sendDataToServer(bot, fmt.Sprintf("http://parser:%s/parse", conf.CAMOUFOX_PORT), data)
+		file_un_id, fileID, err := sendDataToServer(bot, fmt.Sprintf("%s", conf.CAMOUFOX_PORT), data)
 		if err != nil {
 			log.Printf("error when sending data to server: %v", err)
 			sendErrorMessage(bot, chatID, "Internal service error8: попробуйте позже", "menu")
@@ -146,7 +221,13 @@ func sendDataToServer(bot *tgbotapi.BotAPI, url string, data *DataForParser) (st
 
 func downloadAndSendAudio(bot *tgbotapi.BotAPI, chatID int64, fileURL, title, performer string) (string, string, error) {
 	// cкачать файл
-	resp, err := http.Get(fileURL)
+	ctxReq, cancelReq := context.WithTimeout(context.Background(), 1*time.Minute)
+	defer cancelReq()
+	req, err := http.NewRequestWithContext(ctxReq, "GET", fileURL, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("error when create req: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", "", fmt.Errorf("download error: %w", err)
 	}
@@ -211,21 +292,25 @@ func downloadAndSendAudio(bot *tgbotapi.BotAPI, chatID int64, fileURL, title, pe
 
 // -
 // -
+// сделать отправку пользоватлю сообщения о том что поиск начался с последующим удалением этого сообщения
 
 func handlerDownloadMusic(bot *tgbotapi.BotAPI, userID, chatID int64, message *tgbotapi.Message) {
 	log.Printf("прилёт %+v", message.Audio)
-	if message.Audio != nil && (message.Audio.MimeType == "audio/mpeg" || message.Document.MimeType == "audio/mp4") {
+	if message.Audio != nil && message.Document != nil && (message.Audio.MimeType == "audio/mpeg" || message.Document.MimeType == "audio/mp4") {
 		log.Println("условие прошли")
 		file_id := message.Audio.FileID
 		file_un_id := message.Audio.FileUniqueID
 		performer := message.Audio.Performer
 		title := message.Audio.Title
+
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+
 		err := mus_db.InsertMusic(ctx, title, performer, file_id, file_un_id)
 		if err != nil {
 			if pgErr, ok := err.(*pgconn.PgError); ok && pgErr.Code == "23505" {
-				sendSuccessMessage(bot, chatID, "Такой файл уже существует в базе, вы можете прослушивать файл отправленный вами", "menu")
+				// надо заменить msgID на реальную переменную ноль это заглушка
+				sendSuccessMessage(bot, chatID, "Такой файл уже существует в базе, вы можете прослушивать файл отправленный вами", "menu", 0)
 				return
 			} else {
 				sendErrorMessage(bot, chatID, "Internal service error5: попробуйте позже", "menu")
@@ -233,9 +318,12 @@ func handlerDownloadMusic(bot *tgbotapi.BotAPI, userID, chatID int64, message *t
 				return
 			}
 		}
+
 		log.Println("в базу залили")
+
 		ctxUFIL, cancelUFIL := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancelUFIL()
+
 		if err := us_db.UpdateFileIDList(ctxUFIL, userID, file_id); err != nil {
 			sendErrorMessage(bot, chatID, "Internal service error6: попробуйте позже", "menu")
 			log.Printf("error whem update file id list: %v", err)

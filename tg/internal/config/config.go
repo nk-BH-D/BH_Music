@@ -11,18 +11,18 @@ type Config struct {
 	COMMUN_PORT       string
 	CAMOUFOX_PORT     string
 	HEALTH_CHECK_PORT string
-	DB_MUS_URL        string
-	POSTGRES_MUS_SMOC int
-	POSTGRES_MUS_SMIC int
-	DB_US_URL         string
+	POSTGRES_SMOC     int
+	POSTGRES_SMIC     int
+	DB_URL            string
 	POSTGRES_US_SMOC  int
 	POSTGRES_US_SMIC  int
 	REPO_URL          string
 	TG_CHANNEL_URL    string
+	TG_CHANNEL_ID     int64
+	MAX_BRO           int
 }
 
 func Loader() (*Config, error) {
-
 	bot_token := os.Getenv("BOT_TOKEN")
 	if bot_token == "" {
 		return nil, fmt.Errorf("error whem getting bot token")
@@ -43,44 +43,23 @@ func Loader() (*Config, error) {
 		return nil, fmt.Errorf("error whem getting health check port")
 	}
 
-	db_mus_url := os.Getenv("DB_MUS_URL")
-	if db_mus_url == "" {
+	db_url := os.Getenv("DB_URL")
+	if db_url == "" {
 		return nil, fmt.Errorf("error when getting db mus url")
 	}
-	db_mus_smoc := os.Getenv("POSTGRES_MUS_SMOC")
-	if db_mus_smoc == "" {
+	db_smoc := os.Getenv("POSTGRES_SMOC")
+	if db_smoc == "" {
 		return nil, fmt.Errorf("error whem getting db mus smoc")
 	}
-	db_mus_smic := os.Getenv("POSTGRES_MUS_SMIC")
-	if db_mus_smic == "" {
+	db_smic := os.Getenv("POSTGRES_SMIC")
+	if db_smic == "" {
 		return nil, fmt.Errorf("error whem getting db mus smic")
 	}
-	int_db_mus_smoc, err := strconv.Atoi(db_mus_smoc)
+	int_db_smoc, err := strconv.Atoi(db_smoc)
 	if err != nil {
 		return nil, err
 	}
-	int_db_mus_smic, err := strconv.Atoi(db_mus_smic)
-	if err != nil {
-		return nil, err
-	}
-
-	db_us_url := os.Getenv("DB_US_URL")
-	if db_us_url == "" {
-		return nil, fmt.Errorf("error whem getting db users url")
-	}
-	db_us_smoc := os.Getenv("POSTGRES_US_SMOC")
-	if db_us_smoc == "" {
-		return nil, fmt.Errorf("error whem getting db users smoc")
-	}
-	db_us_smic := os.Getenv("POSTGRES_US_SMIC")
-	if db_us_smic == "" {
-		return nil, fmt.Errorf("error whem getting db users smic")
-	}
-	int_db_us_smoc, err := strconv.Atoi(db_us_smoc)
-	if err != nil {
-		return nil, err
-	}
-	int_db_us_smic, err := strconv.Atoi(db_us_smic)
+	int_db_smic, err := strconv.Atoi(db_smic)
 	if err != nil {
 		return nil, err
 	}
@@ -95,18 +74,35 @@ func Loader() (*Config, error) {
 		return nil, fmt.Errorf("error whem getting tg channel url")
 	}
 
+	mxb := os.Getenv("MAX_BRO")
+	if mxb == "" {
+		return nil, fmt.Errorf("errror when get max brouser")
+	}
+	int_mxb, err := strconv.Atoi(mxb)
+	if err != nil {
+		return nil, err
+	}
+
+	tg_id := os.Getenv("TG_CHANNEL_ID")
+	if tg_id == "" {
+		return nil, fmt.Errorf("error when getting tg chanal id")
+	}
+	int_th_id, err := strconv.ParseInt(tg_id, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		BOT_TOKEN:         bot_token,
 		COMMUN_PORT:       commun_port,
 		CAMOUFOX_PORT:     camoufox_port,
 		HEALTH_CHECK_PORT: health_check_port,
-		DB_MUS_URL:        db_mus_url,
-		DB_US_URL:         db_us_url,
-		POSTGRES_MUS_SMOC: int_db_mus_smoc,
-		POSTGRES_MUS_SMIC: int_db_mus_smic,
-		POSTGRES_US_SMOC:  int_db_us_smoc,
-		POSTGRES_US_SMIC:  int_db_us_smic,
+		DB_URL:            db_url,
+		POSTGRES_SMOC:     int_db_smoc,
+		POSTGRES_SMIC:     int_db_smic,
 		REPO_URL:          repo_url,
 		TG_CHANNEL_URL:    tg_channel_url,
+		TG_CHANNEL_ID:     int_th_id,
+		MAX_BRO:           int_mxb,
 	}, nil
 }
