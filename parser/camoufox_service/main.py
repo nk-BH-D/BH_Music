@@ -4,6 +4,7 @@ import logging
 import os
 from camoufox.async_api import AsyncCamoufox 
 import asyncio
+from contextlib import asynccontextmanager
 #import requests
 
 CONFIG = {
@@ -36,7 +37,11 @@ def config_loder():
         raise ValueError("CAMOUFOX_TIMEOUT environment variable is not set")
     CONFIG["camoufox"]["timeout"] = int(timeout)
     CONFIG["camoufox"]["max_bro"] = int(max_bro)
-    logger.info(f"Configuration loaded: {CONFIG}")
+    logger.info(
+        f"Configuration loaded: timeout={CONFIG['camoufox']['timeout']}, "
+        f"headless={CONFIG['camoufox']['handless']}, "
+        f"max_bro={CONFIG['camoufox']['max_bro']}"
+    )
 
 
 async def init_browser_pool():
@@ -56,6 +61,45 @@ async def init_browser_pool():
     except Exception as e:
         logger.error(f"error init browser pool: {e}")
         raise HTTPException(status_code=500, detail=f"init error: {e}")
+
+async def close_browser_pool():
+    async with pool_lock:
+        if not browser_pool:
+            return
+        
+        # список задач на закрытие
+        tasks = []
+        for i, bro in browser_pool.items():
+            tasks.append(bro["browser"].__aexit__(None, None, None))
+        
+        logger.info(f"Closing {len(tasks)} browsers concurrently...")
+        
+        # запускаем всё сразу и ждем завершения всех задач
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for i, res in enumerate(results):
+            if isinstance(res, Exception):
+                logger.error(f"Browser {i} failed to close: {res}")
+            else:
+                logger.info(f"Browser {i} closed successfully")
+    
+        browser_pool.clear()
+    
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Camoufox service is starting up...")
+    try:
+        config_loder()
+        await init_browser_pool()
+        yield
+    finally:
+        await close_browser_pool()
+        logger.info("Camoufox service is shutting down...")
+
+
+app = FastAPI(title="Camoufox Scraping Service", lifespan=lifespan)
 
 
 async def get_free_browser():
@@ -182,35 +226,3 @@ async def dounload_btn(page, url) -> str:
     if file_url and file_url.startswith("http"):
         logger.info(f"Found music URL: {file_url} on page {url}")
         return file_url
-
-
-@app.on_event("startup")
-async def startup_event():
-    config_loder()
-    await init_browser_pool()
-    logger.info("Сервис Camoufox Scraping запущен")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    async with pool_lock:
-        if not browser_pool:
-            return
-        
-        # список задач на закрытие
-        tasks = []
-        for i, bro in browser_pool.items():
-            tasks.append(bro["browser"].__aexit__(None, None, None))
-        
-        logger.info(f"Closing {len(tasks)} browsers concurrently...")
-        
-        # запускаем всё сразу и ждем завершения всех задач
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        for i, res in enumerate(results):
-            if isinstance(res, Exception):
-                logger.error(f"Browser {i} failed to close: {res}")
-            else:
-                logger.info(f"Browser {i} closed successfully")
-
-    browser_pool.clear()
