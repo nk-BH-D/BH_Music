@@ -5,7 +5,7 @@ import os
 from camoufox.async_api import AsyncCamoufox 
 import asyncio
 from contextlib import asynccontextmanager
-#import requests
+from urllib.parse import urlsplit
 
 CONFIG = {
     "camoufox":{
@@ -13,6 +13,7 @@ CONFIG = {
         "handless": True,
         "max_bro": int, 
     },
+    "sites": [],
 }
 
 browser_pool = {}
@@ -29,18 +30,28 @@ class Data(BaseModel):
 
 
 def config_loder():
+    # подтягиваем
     max_bro = os.getenv("MAX_BRO")
     if max_bro is None:
         raise ValueError("MAX_BRO environment variable is not set")
     timeout = os.getenv("CAMOUFOX_TIMEOUT")
     if timeout is None:
         raise ValueError("CAMOUFOX_TIMEOUT environment variable is not set")
+    site0 = os.getenv("SITE0")
+    # подтягиваем ссылки на сайты для парсинга из конфигурации
+    if site0 is None:
+        raise ValueError("SITE1 environment variable is not set")
+
+    # заполняем
     CONFIG["camoufox"]["timeout"] = int(timeout)
     CONFIG["camoufox"]["max_bro"] = int(max_bro)
+    CONFIG["sites"].append(site0)
+
     logger.info(
         f"Configuration loaded: timeout={CONFIG['camoufox']['timeout']}, "
         f"headless={CONFIG['camoufox']['handless']}, "
-        f"max_bro={CONFIG['camoufox']['max_bro']}"
+        f"max_bro={CONFIG['camoufox']['max_bro']}, "
+        f"sites={CONFIG['sites']}"
     )
 
 
@@ -48,13 +59,14 @@ async def init_browser_pool():
     global browser_pool
     try:
         for i in range(CONFIG["camoufox"]["max_bro"]):
-            browser = AsyncCamoufox(
+            manager = AsyncCamoufox(
                 headless = CONFIG["camoufox"]["handless"],
                 timeout = CONFIG["camoufox"]["timeout"]
             )
-            await browser.start() 
+            browser = await manager.__aenter__() 
             logger.info(f"Browser№{i} initialized")
             browser_pool[i] = {
+                "manager": manager,
                 "browser": browser,
                 "busy": False
             }
@@ -70,7 +82,7 @@ async def close_browser_pool():
         # список задач на закрытие
         tasks = []
         for i, bro in browser_pool.items():
-            tasks.append(bro["browser"].__aexit__(None, None, None))
+            tasks.append(bro["manager"].__aexit__(None, None, None))
         
         logger.info(f"Closing {len(tasks)} browsers concurrently...")
         
@@ -123,7 +135,7 @@ async def release_browser(index: int):
 @app.post("/parse")
 async def parse_music(data: Data):
     # найти ссылку 
-    music_url = find_url_by_camoufox(data.title, data.performer)
+    music_url = await find_url_by_camoufox(data.title, data.performer)
 
     if music_url == "":
         raise HTTPException(status_code=404, detail="Music not found")
@@ -136,93 +148,70 @@ async def parse_music(data: Data):
         "chat_id": data.chat_id,
     }      
 
-# ----------------!!!--------------------   
-# надо сделать защиту от редиректа
-# надо сделать функцию которая проверяет ссылки на мусор
-# надо сделать поведение парсера болие универсальным
-# ----------------!!!--------------------
-
 async def find_url_by_camoufox(title, performer: str) -> str:
     i = None
     file_url = ""
     try:
+        # подтягиваем свободный браузер из пула
         i, bro = await get_free_browser()
         page = await bro.new_page()
-        query = f"{title} {performer} скачать"
-        await page.goto(f"https://www.google.com/search?q={query}" , wait_until="networkidle")
-        # берём все выданные поиском ссылки
-        links = await page.query_selector_all('a:has(h3)')
-        search_results = []
-        for link in links:
-            href = await link.get_attribute('href')
-            if href and href.startswith('http'):
-                search_results.append(href)
-        logger.info(f"Search results for query '{query}': {search_results}")
-        # открываем каждую ссылку и ищем музыку
-        for url in search_results:
-            await page.goto(url, wait_until="networkidle")
-            # закрываем все всплывающие окна
-            page.on("popup", lambda p: p.close())
 
-            # пытаемся сразу найти ссылку на музыку
-            file_url = await dounload_btn(page, url)
-            if file_url and file_url.startswith("http"):
-                logger.info(f"Found music URL: {file_url} on page {url}")
-                break
+        # ищем ссылку на трек на всех сайтах из конфигурации
+        for site_index, site_url in enumerate(CONFIG["sites"]):
+            if site_index == 0:
+                logger.info(f"Searching for track on site_index {site_index} using browser№{i}")
+                file_url = await for_site0(site_url, title, performer, page)
+                if file_url:
+                    return file_url
+        return "" 
 
-            # если не нашли, то ищем поле поиска на сайте
-            search_field = await page.query_selector(
-                'input[name="q"], input[name="search"], input[type="search"], input[placeholder*="поиск" i], input[placeholder*="search" i]'
-            )
-            if search_field:
-                # печатаем название песни
-                await search_field.fill(f"{title} {performer}")
-                await search_field.press("Enter")
-
-                # ждем загрузки результатов уже на самом сайте
-                await page.wait_for_load_state("networkidle")
-
-                # ищем ссылки на музыку
-                file_url = await dounload_btn(page, url)
-                if file_url != "":
-                    logger.info(f"Found music URL: {file_url} on page {url}")
-                    break
-                else:
-                    logger.info(f"No music URL found on page {url}")
-                    continue
-
-            else:
-                logger.info(f"No search field found on page {url}")
-                continue      
     except Exception as e:
         logger.error(f"error in find_url_by_camoufox: {e}")
         raise HTTPException(status_code=500, detail=f"error in find_url_by_camoufox: {e}")
     finally:
-        if page:
+        if page is not None:
             await page.close()
+            logger.info(f"Page closed for browser№{i}")
         if i is not None:
             await release_browser(i)
+
+
+async def for_site0(site_url, title, performer: str, page) -> str:
+    #создаем поисковый запрос
+    query = f"{performer} {title}"
+
+    # открываем страницу сайта
+    await page.goto(site_url, wait_until="networkidle")
+    
+    # ищем строку поиска на странице и вводим запрос
+    search_field = page.locator("#story")
+    await search_field.wait_for(state="visible")
+    await search_field.fill(query)
+    await search_field.press("Enter")
+    logger.info("Find track")
+
+    # ищем ссылку на трек в результатах поиска
+    track_link = page.locator("a.track-item__desc").filter(has_text=f"{performer} - {title}").first
+    await track_link.wait_for(state="visible")
+    await track_link.click()
+    await page.wait_for_load_state("networkidle")
+    logger.info("Opened track page")
+
+    # скрапим ссылку на скачивание трека
+    download_link = page.locator('a.page__dl[download][href*="/nos/"]')
+    
+    if await download_link.count() == 0:
+        logger.info("Download link not found on %s", page.url)
+        return ""
+
+    file_url = await download_link.first.evaluate("(element) => element.href")
+    parsed_url = urlsplit(file_url)
+
+    if (
+        parsed_url.scheme != "https"
+        or not parsed_url.path.lower().endswith(".mp3")
+    ):
+        raise ValueError(f"Unexpected download URL on {page.url}: {file_url}")
+
+    logger.info("Found track download link on %s", page.url)
     return file_url
-
-
-async def dounload_btn(page, url) -> str:
-    file_url = ""
-    download_btn  = await page.query_selector('a[href*=".mp3"]')
-    if download_btn:
-        file_url = await download_btn.get_attribute("href")
-    else:
-        selectors = [
-            "a.download", 
-            "a.btn-download", 
-            "button.download", 
-            "[title*='Скачать']", 
-            ".download-link"
-        ]
-        for selector in selectors:
-            btn = await page.query_selector(selector)
-            if btn:
-                file_url = await btn.get_attribute("href")
-
-    if file_url and file_url.startswith("http"):
-        logger.info(f"Found music URL: {file_url} on page {url}")
-        return file_url

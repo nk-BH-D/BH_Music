@@ -149,6 +149,10 @@ func handlerSearchMusic(bot *tgbotapi.BotAPI, userID, chatID int64, message *tgb
 			sendErrorMessage(bot, chatID, "Internal service error8: попробуйте позже", "menu")
 			return
 		}
+		if file_un_id == "no found" {
+			sendSuccessMessage(bot, chatID, "Ваш трек не найден на доступных боту ресурсах", "", message.MessageID)
+			return
+		}
 		log.Println(fileID)
 		// добавляем в базу
 		ctxInsert, cancelInsert := context.WithTimeout(context.Background(), 5*time.Second)
@@ -167,7 +171,7 @@ func handlerSearchMusic(bot *tgbotapi.BotAPI, userID, chatID int64, message *tgb
 		}
 		return
 	}
-	sendFileAsAudio(bot, chatID, file_id, title, performer, "Вот ваш трек!")
+	sendFileAsAudio(bot, chatID, file_id, title, performer, "Вот ваш трек!", message.MessageID)
 }
 
 func sendDataToServer(bot *tgbotapi.BotAPI, url string, data *DataForParser) (string, string, error) {
@@ -176,7 +180,7 @@ func sendDataToServer(bot *tgbotapi.BotAPI, url string, data *DataForParser) (st
 		return "", "", fmt.Errorf("error serializing data: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(
 		ctx,
@@ -201,6 +205,9 @@ func sendDataToServer(bot *tgbotapi.BotAPI, url string, data *DataForParser) (st
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusNotFound {
+			return "not fount", "", nil
+		}
 		return "", "", fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
 	} else {
 		var respData DataFromParser
@@ -208,9 +215,6 @@ func sendDataToServer(bot *tgbotapi.BotAPI, url string, data *DataForParser) (st
 			return "", "", fmt.Errorf("error decoding response: %w", err)
 		}
 		log.Printf("Received from parser: %+v", respData)
-		//respData.URL = "https://ru-d3.drivemusic.me/dl/lOg3JY8ZCnK7oSnFCYLG0Q/1776925461/download_music/2024/11/arija-bespechnyjj-angel.mp3"
-		//respData.URL = "https://sbornik.cc/chart/Madk1D,%20VILLIAN%20-%208%20Milia%20(Sbornik.cc).mp3"
-		respData.URL = "https://sbornik.cc/chart/Madk1D,%20Greyrock,%20Tewiq%20-%20MARTINE%20ROSE%20(Sbornik.cc).mp3"
 		file_un_id, fileID, err := downloadAndSendAudio(bot, respData.ChatID, respData.URL, respData.Title, respData.Performer)
 		if err != nil {
 			return "", "", fmt.Errorf("error downloading or sending audio: %w", err)
@@ -286,14 +290,10 @@ func downloadAndSendAudio(bot *tgbotapi.BotAPI, chatID int64, fileURL, title, pe
 	if msg.Audio == nil {
 		return "", "", fmt.Errorf("no audio in response")
 	}
-	log.Println("ВСЁ ЗАЕБИСЬ")
 	return msg.Audio.FileUniqueID, msg.Audio.FileID, nil
 }
 
-// -
-// -
-// сделать отправку пользоватлю сообщения о том что поиск начался с последующим удалением этого сообщения
-
+// обработчик добавления в базу файлов отправленных пользователем
 func handlerDownloadMusic(bot *tgbotapi.BotAPI, userID, chatID int64, message *tgbotapi.Message) {
 	log.Printf("прилёт %+v", message.Audio)
 	if message.Audio != nil && message.Document != nil && (message.Audio.MimeType == "audio/mpeg" || message.Document.MimeType == "audio/mp4") {
@@ -309,8 +309,8 @@ func handlerDownloadMusic(bot *tgbotapi.BotAPI, userID, chatID int64, message *t
 		err := mus_db.InsertMusic(ctx, title, performer, file_id, file_un_id)
 		if err != nil {
 			if pgErr, ok := err.(*pgconn.PgError); ok && pgErr.Code == "23505" {
-				// надо заменить msgID на реальную переменную ноль это заглушка
-				sendSuccessMessage(bot, chatID, "Такой файл уже существует в базе, вы можете прослушивать файл отправленный вами", "menu", 0)
+				// тут надо сохранить id существуещего файла в fail_id_list у пользователя
+				sendSuccessMessage(bot, chatID, "Такой файл уже существует в базе, вы можете прослушивать файл отправленный вами", "menu", message.MessageID)
 				return
 			} else {
 				sendErrorMessage(bot, chatID, "Internal service error5: попробуйте позже", "menu")
@@ -329,10 +329,24 @@ func handlerDownloadMusic(bot *tgbotapi.BotAPI, userID, chatID int64, message *t
 			log.Printf("error whem update file id list: %v", err)
 			return
 		}
-		sendFileAsAudio(bot, chatID, file_id, title, performer, "Ваш файл успешно сохранён, приятного прослушивания")
+		sendFileAsAudio(bot, chatID, file_id, title, performer, "Ваш файл успешно сохранён, приятного прослушивания", message.MessageID)
 		return
 	} else {
 		sendErrorMessage(bot, chatID, "Такой формат файлов не поддерживаеться.", "menu")
 		return
+	}
+}
+
+func sendFileAsAudio(bot *tgbotapi.BotAPI, chatID int64, fileID string, title, performer, text string, msgID int) {
+	audioConfig := tgbotapi.NewAudio(chatID, tgbotapi.FileID(fileID))
+	audioConfig.Title = title
+	audioConfig.Caption = text
+	audioConfig.Performer = performer
+	audioConfig.ReplyMarkup = createMenuKeyboard()
+	audioConfig.ReplyParameters = &tgbotapi.ReplyParameters{MessageID: msgID}
+
+	_, err := bot.Send(audioConfig)
+	if err != nil {
+		log.Printf("Ошибка при отправке файла как музыки: %v", err)
 	}
 }

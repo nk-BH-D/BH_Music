@@ -122,19 +122,6 @@ func assistedSendSuccessMessage(bot *tgbotapi.BotAPI, chatID int64, message_list
 
 }
 
-func sendFileAsAudio(bot *tgbotapi.BotAPI, chatID int64, fileID string, title, performer, text string) {
-	audioConfig := tgbotapi.NewAudio(chatID, tgbotapi.FileID(fileID))
-	audioConfig.Title = title
-	audioConfig.Caption = text
-	audioConfig.Performer = performer
-	audioConfig.ReplyMarkup = createMenuKeyboard()
-
-	_, err := bot.Send(audioConfig)
-	if err != nil {
-		log.Printf("Ошибка при отправке файла как музыки: %v", err)
-	}
-}
-
 // функция валидации пользователлей
 func userValid(bot *tgbotapi.BotAPI, userID, chatID int64) bool {
 	ctx, cancle := context.WithTimeout(context.Background(), 5*time.Second)
